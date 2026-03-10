@@ -24,7 +24,7 @@ except ImportError:
 # INICIALIZAÇÃO E DOWNLOAD DO MAPA
 # ==========================================
 print("Carregando o sistema e baixando o mapa do Cruzeiro (DF)...")
-if 'traffic_calming' not in ox.settings.useful_tags_node:
+if 'traffic_calming' not in ox.settings.useful_tags_node: # verificar em que impacta no código
     ox.settings.useful_tags_node.append('traffic_calming')
 if 'surface' not in ox.settings.useful_tags_way:
     ox.settings.useful_tags_way.append('surface')
@@ -32,35 +32,33 @@ if 'surface' not in ox.settings.useful_tags_way:
 G = ox.graph_from_place("Cruzeiro, Distrito Federal, Brazil", network_type="drive")
 
 VELOCIDADE_MAX_MAPA_MS = 80 / 3.6
-VELOCIDADE_PADRAO_KMH = {'trunk': 80, 'primary': 60, 'secondary': 50, 'tertiary': 40, 'residential': 30, 'unclassified': 30}
+VELOCIDADE_PADRAO_KMH = {'trunk': 80, 'primary': 60, 'secondary': 60, 'tertiary': 40, 'residential': 40, 'unclassified': 40}
 
 # ==========================================
 # 1. MODELO FÍSICO DE PENALIDADES
 # ==========================================
+
+SEMAFORO_30_PENALIDADE = 30.0
+SEMAFORO_60_PENALIDADE = 60.0
+LOMBADA_40_PENALIDADE = 15.0
+LOMBADA_60_PENALIDADE = 10.0
+LOMBADA_80_PENALIDADE = 5.0
+
+def multiplicador_via(vel_kmh):
+    if vel_kmh <= 40:
+        return 1.5
+    elif vel_kmh <= 60:
+        return 1.2
+    else:
+        return 1.0
+    
+
+
 FRENAGEM_MS2 = 3.0        
 ACELERACAO_MS2 = 2.0      
-ESPERA_SEMAFORO_S = 15.0   
+ESPERA_SEMAFORO_S = 30.0   
 VEL_LOMBADA_KMH = 20.0    
 ZONA_LOMBADA_M = 30.0     
-
-def penalidade_semaforo(vel_ms):
-    tempo_frenagem = vel_ms / FRENAGEM_MS2
-    tempo_aceleracao = vel_ms / ACELERACAO_MS2
-    return ESPERA_SEMAFORO_S + tempo_frenagem + tempo_aceleracao
-
-def penalidade_lombada(vel_ms):
-    vel_lombada_ms = VEL_LOMBADA_KMH / 3.6
-    if vel_ms <= vel_lombada_ms:
-        return 0.0  
-    
-    diferenca_vel = vel_ms - vel_lombada_ms
-    tempo_frenagem = diferenca_vel / FRENAGEM_MS2
-    tempo_aceleracao = diferenca_vel / ACELERACAO_MS2
-    tempo_zona_normal = ZONA_LOMBADA_M / vel_ms
-    tempo_zona_lombada = ZONA_LOMBADA_M / vel_lombada_ms
-    tempo_extra_zona = tempo_zona_lombada - tempo_zona_normal
-    
-    return tempo_frenagem + tempo_aceleracao + tempo_extra_zona
 
 # ==========================================
 # 1. PERSISTÊNCIA DE EDIÇÕES (JSON)
@@ -69,8 +67,11 @@ ARQUIVO_EDICOES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'edic
 
 def salvar_edicoes():
     dados = {
-        'semaforos': list(edicoes_usuario['semaforos']),
-        'lombadas': list(edicoes_usuario['lombadas']),
+        'semaforos60': list(edicoes_usuario['semaforos60']),
+        'semaforos30': list(edicoes_usuario['semaforos30']),
+        'lombadas40': list(edicoes_usuario['lombadas40']),
+        'lombadas60': list(edicoes_usuario['lombadas60']),
+        'lombadas80': list(edicoes_usuario['lombadas80']),
         'velocidades': {f"{u},{v},{k}": vel for (u, v, k), vel in edicoes_usuario['velocidades'].items()},
         'removidos': list(edicoes_usuario['removidos']),
     }
@@ -84,8 +85,11 @@ def carregar_edicoes():
         with open(ARQUIVO_EDICOES, 'r', encoding='utf-8') as f:
             dados = json.load(f)
         edicoes = {
-            'semaforos': set(dados.get('semaforos', [])),
-            'lombadas': set(dados.get('lombadas', [])),
+            'semaforos60': set(dados.get('semaforos60', [])),
+            'semaforos30': set(dados.get('semaforos30', [])),
+            'lombadas40': set(dados.get('lombadas40', [])),
+            'lombadas60': set(dados.get('lombadas60', [])),
+            'lombadas80': set(dados.get('lombadas80', [])),
             'velocidades': {},
             'removidos': set(dados.get('removidos', [])),
         }
@@ -95,35 +99,42 @@ def carregar_edicoes():
         return edicoes
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"⚠️ Erro ao carregar edições salvas: {e}. Usando mapa limpo.")
-        return {'semaforos': set(), 'lombadas': set(), 'velocidades': {}, 'removidos': set()}
+        return {'semaforos60': set(), 'semaforos30': set(), 'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 'velocidades': {}, 'removidos': set()}
 
 edicoes_usuario = carregar_edicoes()
 tem_edicoes_salvas = os.path.exists(ARQUIVO_EDICOES) and any([
-    edicoes_usuario['semaforos'], edicoes_usuario['lombadas'],
+    edicoes_usuario['semaforos60'], edicoes_usuario['semaforos30'],
+    edicoes_usuario['lombadas40'], edicoes_usuario['lombadas60'], edicoes_usuario['lombadas80'],
     edicoes_usuario['velocidades'], edicoes_usuario['removidos']
 ])
 if tem_edicoes_salvas:
-    qtd = (len(edicoes_usuario['semaforos']) + len(edicoes_usuario['lombadas']) +
+    qtd = (len(edicoes_usuario['semaforos60']) + len(edicoes_usuario['semaforos30']) +
+           len(edicoes_usuario['lombadas40']) + len(edicoes_usuario['lombadas60']) + len(edicoes_usuario['lombadas80']) +
            len(edicoes_usuario['velocidades']) + len(edicoes_usuario['removidos']))
     print(f"📂 {qtd} edição(ões) carregada(s) do arquivo anterior.")
 
 # ==========================================
 #  MOTOR DE CÁLCULO DE PESOS
 # ==========================================
+
 def atualizar_pesos_do_grafo():
-    semaforos_ativos = edicoes_usuario['semaforos'].copy()
-    lombadas_ativas = edicoes_usuario['lombadas'].copy()
-    
+    semaforos_30_ativos = edicoes_usuario['semaforos_30'].copy()
+    semaforos_60_ativos = edicoes_usuario['semaforos_60'].copy()
+    lombadas_40_ativas = edicoes_usuario['lombadas_40'].copy()
+    lombadas_60_ativas = edicoes_usuario['lombadas_60'].copy()
+    lombadas_80_ativas = edicoes_usuario['lombadas_80'].copy()
+
     for node, data in G.nodes(data=True):
         if node in edicoes_usuario['removidos']: continue
-        if data.get('highway') == 'traffic_signals': semaforos_ativos.add(node)
-        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_ativas.add(node)
+        if data.get('highway') == 'traffic_signals': semaforos_30_ativos.add(node)
+        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_40_ativas.add(node)
 
     for u, v, key, data in G.edges(keys=True, data=True):
         distancia_m = data.get('length', 0)
         tipo_via = data.get('highway', 'residential')
+
         if isinstance(tipo_via, list): tipo_via = tipo_via[0]
-        
+
         if (u, v, key) in edicoes_usuario['velocidades']:
             vel_kmh = edicoes_usuario['velocidades'][(u, v, key)]
         else:
@@ -132,18 +143,27 @@ def atualizar_pesos_do_grafo():
                 vel_kmh = VELOCIDADE_PADRAO_KMH.get(tipo_via, 30)
             else:
                 vel_kmh = float(vel_kmh)
-            
+
         vel_ms = max(0.1, vel_kmh / 3.6)
         tempo_segundos = distancia_m / vel_ms
-        
-        if v in semaforos_ativos:
-            tempo_segundos += penalidade_semaforo(vel_ms)
-        if v in lombadas_ativas:
-            tempo_segundos += penalidade_lombada(vel_ms)
-            
-        G[u][v][key]['tempo_segundos'] = tempo_segundos
 
-atualizar_pesos_do_grafo()
+        tempo_base = distancia_m / vel_ms
+
+        tempo_segundos = tempo_base * multiplicador_via(vel_kmh)
+
+        if v in semaforos_30_ativos:
+            tempo_segundos += SEMAFORO_30_PENALIDADE
+        elif v in semaforos_60_ativos:
+            tempo_segundos += SEMAFORO_60_PENALIDADE
+
+        if v in lombadas_40_ativas:
+            tempo_segundos += LOMBADA_40_PENALIDADE
+        elif v in lombadas_60_ativas:
+            tempo_segundos += LOMBADA_60_PENALIDADE
+        elif v in lombadas_80_ativas:
+            tempo_segundos += LOMBADA_80_PENALIDADE
+
+        G[u][v][key]['tempo_segundos'] = tempo_segundos
 
 def fechar_janela_seguro(fig):
     plt.close(fig)
@@ -265,14 +285,20 @@ def dijkstra_animado(inicio, fim):
 def calcular_estatisticas_dict(caminho):
     distancia_total = 0
     tempo_total = 0
-    semaforos_passados = 0
-    lombadas_passadas = 0
+    semaforos60_passados = 0
+    semaforos30_passados = 0
+    lombadas40_passadas = 0
+    lombadas60_passadas = 0
+    lombadas80_passadas = 0
 
-    semaforos_ativos = edicoes_usuario['semaforos'].copy()
-    lombadas_ativas = edicoes_usuario['lombadas'].copy()
+    semaforos60_ativos = edicoes_usuario['semaforos60'].copy()
+    semaforos30_ativos = edicoes_usuario['semaforos30'].copy()
+    lombadas40_ativas = edicoes_usuario['lombadas40'].copy()
+    lombadas60_ativas = edicoes_usuario['lombadas60'].copy()
+    lombadas80_ativas = edicoes_usuario['lombadas80'].copy()
     for n, d in G.nodes(data=True):
-        if d.get('highway') == 'traffic_signals': semaforos_ativos.add(n)
-        if d.get('traffic_calming') in ['bump', 'hump']: lombadas_ativas.add(n)
+        if d.get('highway') == 'traffic_signals': semaforos30_ativos.add(n)
+        if d.get('traffic_calming') in ['bump', 'hump']: lombadas40_ativas.add(n)
 
     for i in range(len(caminho)-1):
         u = caminho[i]
@@ -280,16 +306,21 @@ def calcular_estatisticas_dict(caminho):
         dados_aresta = G[u][v][0]
         distancia_total += dados_aresta['length']
         tempo_total += dados_aresta['tempo_segundos']
-        if v in semaforos_ativos: semaforos_passados += 1
-        if v in lombadas_ativas: lombadas_passadas += 1
-
+        if v in semaforos60_ativos: semaforos60_passados += 1
+        if v in semaforos30_ativos: semaforos30_passados += 1
+        if v in lombadas40_ativas: lombadas40_passadas += 1
+        if v in lombadas60_ativas: lombadas60_passadas += 1
+        if v in lombadas80_ativas: lombadas80_passadas += 1
     vel_media = (distancia_total / tempo_total) * 3.6 if tempo_total > 0 else 0
     return {
         'distancia_km': distancia_total / 1000,
         'tempo_min': tempo_total / 60,
         'vel_media': vel_media,
-        'semaforos': semaforos_passados,
-        'lombadas': lombadas_passadas,
+        'semaforos60': semaforos60_passados,
+        'semaforos30': semaforos30_passados,
+        'lombadas40': lombadas40_passadas,
+        'lombadas60': lombadas60_passadas,
+        'lombadas80': lombadas80_passadas,
     }
 
 def formatar_estatisticas(stats, visitados, tempo_execucao, titulo="ESTATÍSTICAS DA ROTA"):
@@ -779,7 +810,7 @@ while True:
     if opcao == '1': modo_selecionar_rota()
     elif opcao == '2': modo_edicao()
     elif opcao == '3':
-        edicoes_usuario = {'semaforos': set(), 'lombadas': set(), 'velocidades': {}, 'removidos': set()}
+        edicoes_usuario = {'semaforos60': set(), 'semaforos30': set(), 'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 'velocidades': {}, 'removidos': set()}
         atualizar_pesos_do_grafo()
         salvar_edicoes()
         print("🔄 Mapa resetado para os padrões de fábrica!")
