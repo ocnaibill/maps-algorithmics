@@ -226,6 +226,40 @@ def a_star_animado(inicio, fim):
     return caminho, visitados
 
 # ==========================================
+# ALGORITMO DIJKSTRA
+# ==========================================
+def dijkstra_animado(inicio, fim):
+    fila = []
+    heapq.heappush(fila, (0, inicio))
+    g_custo = {inicio: 0}
+    pais = {}
+    visitados = []
+
+    while fila:
+        _, atual = heapq.heappop(fila)
+        visitados.append(atual)
+
+        if atual == fim: break
+
+        for vizinho in G.neighbors(atual):
+            peso = G[atual][vizinho][0]['tempo_segundos']
+            novo_g = g_custo[atual] + peso
+
+            if vizinho not in g_custo or novo_g < g_custo[vizinho]:
+                g_custo[vizinho] = novo_g
+                pais[vizinho] = atual
+                heapq.heappush(fila, (novo_g, vizinho))
+
+    caminho = []
+    atual = fim
+    while atual in pais:
+        caminho.append(atual)
+        atual = pais[atual]
+    caminho.append(inicio)
+    caminho.reverse()
+    return caminho, visitados
+
+# ==========================================
 #  INTERFACES E PAINEL DE ESTATÍSTICAS
 # ==========================================
 def calcular_estatisticas_dict(caminho):
