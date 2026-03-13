@@ -465,24 +465,6 @@ def exibir_mapa_com_painel(caminho, visitados, tempo_execucao, animar=False,
     # CORREÇÃO AQUI: Controle de Z-Order e Espessura das Rotas
     # ---------------------------------------------------------
     if comparando:
-        # 1. Rota ORIGINAL primeiro: Mais GROSSA e com transparência. Serve como "borda" ou "fundo".
-        ox.plot_graph_route(G, caminho_original, ax=ax_mapa, route_color='#FF6600',
-                           route_linewidth=8, node_size=0, route_alpha=0.5)
-        
-        # 2. Rota EDITADA por cima: Mais FINA e opaca. Passa por "dentro" da rota original se forem iguais.
-        ox.plot_graph_route(G, caminho, ax=ax_mapa, route_color='#00FF88',
-                           route_linewidth=3, node_size=0, route_alpha=1.0)
-        
-        orig_x, orig_y = G.nodes[caminho[0]]['x'], G.nodes[caminho[0]]['y']
-        dest_x, dest_y = G.nodes[caminho[-1]]['x'], G.nodes[caminho[-1]]['y']
-        ax_mapa.scatter([orig_x], [orig_y], c='white', s=150, marker='o', 
-                       edgecolors='black', linewidths=2, zorder=8, label='Origem')
-        ax_mapa.scatter([dest_x], [dest_y], c='white', s=150, marker='*', 
-                       edgecolors='black', linewidths=2, zorder=8, label='Destino')
-    else:
-        ox.plot_graph_route(G, caminho, ax=ax_mapa, route_color='red', route_linewidth=4, node_size=0)
-    
-    if comparando:
         from matplotlib.lines import Line2D
         titulo_mapa = "🟢 Rota Editada  vs  🟠 Rota Original"
         if rotas_identicas:
@@ -492,10 +474,24 @@ def exibir_mapa_com_painel(caminho, visitados, tempo_execucao, animar=False,
             Line2D([0], [0], color='#00FF88', linewidth=3, label='Rota Editada'),
             Line2D([0], [0], color='#FF6600', linewidth=8, alpha=0.5, label='Rota Original'),
         ]
-        ax_mapa.legend(handles=legenda, loc='lower right', facecolor='#222222', labelcolor='white', fontsize=10)
+        ax_mapa.legend(handles=legenda, loc='best', facecolor='#222222', labelcolor='white', fontsize=10)
     else:
         ax_mapa.set_title("A* - Busca Concluída!", color='lime', fontsize=16, fontweight='bold')
-    
+
+    if comparando:
+        # 1. Rota ORIGINAL primeiro: Mais GROSSA e com transparência. Serve como "borda" ou "fundo".
+        # 2. Rota EDITADA por cima: Mais FINA e opaca. Passa por "dentro" da rota original se forem iguais.
+        ox.plot_graph_routes(G, [caminho_original, caminho], route_colors=['#FF6600', '#00FF88' ], route_linewidths=[8, 3], ax=ax_mapa, node_size=0, route_alpha=0.7)
+        
+        orig_x, orig_y = G.nodes[caminho[0]]['x'], G.nodes[caminho[0]]['y']
+        dest_x, dest_y = G.nodes[caminho[-1]]['x'], G.nodes[caminho[-1]]['y']
+        ax_mapa.scatter([orig_x], [orig_y], c='white', s=150, marker='o', 
+                       edgecolors='black', linewidths=2, zorder=8, label='Origem')
+        ax_mapa.scatter([dest_x], [dest_y], c='white', s=150, marker='*', 
+                       edgecolors='black', linewidths=2, zorder=8, label='Destino')
+    else:
+        ox.plot_graph_route(G, caminho, ax=ax_mapa, route_color='red', route_linewidth=4, node_size=0)
+
     plt.show()
 
 def modo_selecionar_rota():
