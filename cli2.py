@@ -103,12 +103,16 @@ def carregar_edicoes():
             partes = chave_str.split(',')
             edicoes['velocidades'][(int(partes[0]), int(partes[1]), int(partes[2]))] = vel
         return edicoes
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        print(f"⚠️ Erro ao carregar edições salvas: {e}. Usando mapa limpo.")
+    except Exception as e:
+        print(f"⚠️ Erro ao carregar: {e}. Criando novo dicionário limpo.")
         return {
-            'semaforos60': set(), 'semaforos30': set(), 
-            'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 
-            'velocidades': {}, 'removidos': set()
+            'semaforos60': set(), 
+            'semaforos30': set(), 
+            'lombadas40': set(), 
+            'lombadas60': set(), 
+            'lombadas80': set(), 
+            'velocidades': {}, 
+            'removidos': set()
         }
 
 edicoes_usuario = carregar_edicoes()
@@ -126,6 +130,22 @@ if tem_edicoes_salvas:
            len(edicoes_usuario['lombadas40']) + len(edicoes_usuario['lombadas60']) + len(edicoes_usuario['lombadas80']) +
            len(edicoes_usuario['velocidades']) + len(edicoes_usuario['removidos']))
     print(f"📂 {qtd} edição(ões) carregada(s) do arquivo anterior.")
+
+def resetar_todas_edicoes():
+    edicoes_usuario['semaforos30'].clear()
+    edicoes_usuario['semaforos60'].clear()
+    edicoes_usuario['lombadas40'].clear()
+    edicoes_usuario['lombadas60'].clear()
+    edicoes_usuario['lombadas80'].clear()
+    edicoes_usuario['velocidades'].clear()
+    edicoes_usuario['removidos'].clear()
+    
+    if os.path.exists(ARQUIVO_EDICOES):
+        os.remove(ARQUIVO_EDICOES)
+        print("🗑️ Arquivo de edições removido do disco.")
+    
+    atualizar_pesos_do_grafo()
+    print("🔄 Mapa resetado para os padrões originais!")
 
 # ==========================================
 #  MOTOR DE CÁLCULO DE PESOS
@@ -367,6 +387,14 @@ def formatar_comparacao(stats_mod, stats_orig):
             cor = "⬆️" if delta > 0 else "⬇️"
         return f"{cor}{sinal}{delta:{fmt}}"
     
+    # Calculo de Semaforos editados x originais
+    sem_mod = stats_mod['semaforos30'] + stats_mod['semaforos60']
+    sem_orig = stats_orig['semaforos30'] + stats_orig['semaforos60']
+    
+    # Calculo de Lombadas editados x originais
+    lom_mod = stats_mod['lombadas40'] + stats_mod['lombadas60'] + stats_mod['lombadas80']
+    lom_orig = stats_orig['lombadas40'] + stats_orig['lombadas60'] + stats_orig['lombadas80']
+    
     return (
         f"COMPARAÇÃO\n"
         f"Editado vs Original\n\n"
@@ -380,9 +408,9 @@ def formatar_comparacao(stats_mod, stats_orig):
         f"   {stats_mod['vel_media']:.1f} vs {stats_orig['vel_media']:.1f}\n"
         f"   {diff(stats_mod['vel_media'], stats_orig['vel_media'])}\n\n"
         f"🚦 Semáforos:\n"
-        f"   {stats_mod['semaforos']} vs {stats_orig['semaforos']}\n\n"
+        f"   {sem_mod} vs {sem_orig}\n\n"
         f"🏔️ Lombadas:\n"
-        f"   {stats_mod['lombadas']} vs {stats_orig['lombadas']}"
+        f"   {lom_mod} vs {lom_orig}"
     )
 
 def exibir_mapa_com_painel(caminho, visitados, tempo_execucao, animar=False,
@@ -508,6 +536,8 @@ def modo_selecionar_rota():
         nos_em_comum = nos_editado & nos_original
         nos_so_editado = nos_editado - nos_original
         nos_so_original = nos_original - nos_editado
+        total_sem = len(edicoes_usuario['semaforos30']) + len(edicoes_usuario['semaforos60']) # Calculo de semáforos editados
+        total_lom = len(edicoes_usuario['lombadas40']) + len(edicoes_usuario['lombadas60']) + len(edicoes_usuario['lombadas80']) # Calculo de lombadas editadas
         
         print(f"\n{'=' * 60}")
         print(f"🔍 DEBUG — COMPARAÇÃO DE ROTAS")
@@ -524,7 +554,7 @@ def modo_selecionar_rota():
         diff_dist = stats_mod['distancia_km'] - stats_orig['distancia_km']
         diff_tempo = stats_mod['tempo_min'] - stats_orig['tempo_min']
         print(f"  DIFERENÇA→ Dist: {'+' if diff_dist >= 0 else ''}{diff_dist:.3f} km | Tempo: {'+' if diff_tempo >= 0 else ''}{diff_tempo:.2f} min")
-        print(f"  Edições ativas: {len(edicoes_usuario['semaforos'])} semáforos, {len(edicoes_usuario['lombadas'])} lombadas, {len(edicoes_usuario['velocidades'])} velocidades")
+        print(f"  Edições ativas: {total_sem} semáforos, {total_lom} lombadas, {len(edicoes_usuario['velocidades'])} velocidades")
         print(f"{'=' * 60}\n")
         
         exibir_mapa_com_painel(caminho, visitados, tempo_execucao, animar=(visualizacao == '2'),
@@ -685,7 +715,6 @@ def modo_edicao():
         elif G.nodes[no_prox].get('highway') == 'traffic_signals' and no_prox not in edicoes_usuario['removidos']:
             tem_semaforo, origem_semaforo = True, 'original do mapa'
 
-        # Verificação de Lombadas/Pardais (Nova Lógica)
         tem_lombada = False
         origem_lombada = ''
         for cat in ['lombadas40', 'lombadas60', 'lombadas80']:
@@ -869,10 +898,7 @@ while True:
     if opcao == '1': modo_selecionar_rota()
     elif opcao == '2': modo_edicao()
     elif opcao == '3':
-        edicoes_usuario = carregar_edicoes()
-        atualizar_pesos_do_grafo()
-        salvar_edicoes()
-        print("🔄 Mapa resetado para os padrões de fábrica!")
+        resetar_todas_edicoes()
     elif opcao == '4':
         salvar_edicoes()
         print("💾 Edições salvas. Até logo!")
