@@ -1,5 +1,6 @@
 import sys
 import matplotlib
+from scipy import stats
 if sys.platform == 'darwin': 
     matplotlib.use('TkAgg')
     matplotlib.rcParams['figure.dpi'] = 100  
@@ -38,21 +39,22 @@ VELOCIDADE_PADRAO_KMH = {'trunk': 80, 'primary': 60, 'secondary': 60, 'tertiary'
 # 1. MODELO FÍSICO DE PENALIDADES
 # ==========================================
 
-SEMAFORO_30_PENALIDADE = 30.0
-SEMAFORO_60_PENALIDADE = 60.0
-LOMBADA_40_PENALIDADE = 15.0
-LOMBADA_60_PENALIDADE = 10.0
-LOMBADA_80_PENALIDADE = 5.0
+TABELA_PENALIDADES = {
+    'semaforo30': 30.0,
+    'semaforo60': 60.0,
+    'lombada40': 15.0,
+    'lombada60': 10.0,
+    'lombada80': 5.0
+}
+
 
 def multiplicador_via(vel_kmh):
-    if vel_kmh <= 40:
+    if vel_kmh <= 40:   # Via coletora
         return 1.5
-    elif vel_kmh <= 60:
+    elif vel_kmh <= 60: # Via arterial
         return 1.2
-    else:
+    else:               # Via expressa
         return 1.0
-    
-
 
 FRENAGEM_MS2 = 3.0        
 ACELERACAO_MS2 = 2.0      
@@ -80,7 +82,11 @@ def salvar_edicoes():
 
 def carregar_edicoes():
     if not os.path.exists(ARQUIVO_EDICOES):
-        return {'semaforos': set(), 'lombadas': set(), 'velocidades': {}, 'removidos': set()}
+        return {
+            'semaforos60': set(), 'semaforos30': set(), 
+            'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 
+            'velocidades': {}, 'removidos': set()
+        }
     try:
         with open(ARQUIVO_EDICOES, 'r', encoding='utf-8') as f:
             dados = json.load(f)
@@ -99,13 +105,21 @@ def carregar_edicoes():
         return edicoes
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"⚠️ Erro ao carregar edições salvas: {e}. Usando mapa limpo.")
-        return {'semaforos60': set(), 'semaforos30': set(), 'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 'velocidades': {}, 'removidos': set()}
+        return {
+            'semaforos60': set(), 'semaforos30': set(), 
+            'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 
+            'velocidades': {}, 'removidos': set()
+        }
 
 edicoes_usuario = carregar_edicoes()
 tem_edicoes_salvas = os.path.exists(ARQUIVO_EDICOES) and any([
-    edicoes_usuario['semaforos60'], edicoes_usuario['semaforos30'],
-    edicoes_usuario['lombadas40'], edicoes_usuario['lombadas60'], edicoes_usuario['lombadas80'],
-    edicoes_usuario['velocidades'], edicoes_usuario['removidos']
+    edicoes_usuario['semaforos60'], 
+    edicoes_usuario['semaforos30'],    
+    edicoes_usuario['lombadas40'], 
+    edicoes_usuario['lombadas60'], 
+    edicoes_usuario['lombadas80'],
+    edicoes_usuario['velocidades'], 
+    edicoes_usuario['removidos']
 ])
 if tem_edicoes_salvas:
     qtd = (len(edicoes_usuario['semaforos60']) + len(edicoes_usuario['semaforos30']) +
@@ -118,52 +132,46 @@ if tem_edicoes_salvas:
 # ==========================================
 
 def atualizar_pesos_do_grafo():
-    semaforos_30_ativos = edicoes_usuario['semaforos_30'].copy()
-    semaforos_60_ativos = edicoes_usuario['semaforos_60'].copy()
-    lombadas_40_ativas = edicoes_usuario['lombadas_40'].copy()
-    lombadas_60_ativas = edicoes_usuario['lombadas_60'].copy()
-    lombadas_80_ativas = edicoes_usuario['lombadas_80'].copy()
+    sem30 = edicoes_usuario['semaforos30'].copy()
+    sem60 = edicoes_usuario['semaforos60'].copy()
+    lom40 = edicoes_usuario['lombadas40'].copy()
+    lom60 = edicoes_usuario['lombadas60'].copy()
+    lom80 = edicoes_usuario['lombadas80'].copy()
 
     for node, data in G.nodes(data=True):
-        if node in edicoes_usuario['removidos']: continue
-        if data.get('highway') == 'traffic_signals': semaforos_30_ativos.add(node)
-        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_40_ativas.add(node)
+        if node in edicoes_usuario['removidos']: 
+            continue
+        
+        if data.get('highway') == 'traffic_signals':
+            if node not in sem60:
+                sem30.add(node)
+        
+        if data.get('traffic_calming') in ['bump', 'hump']:
+            if node not in lom60 and node not in lom80:
+                lom40.add(node)
 
     for u, v, key, data in G.edges(keys=True, data=True):
         distancia_m = data.get('length', 0)
-        tipo_via = data.get('highway', 'residential')
-
-        if isinstance(tipo_via, list): tipo_via = tipo_via[0]
-
-        if (u, v, key) in edicoes_usuario['velocidades']:
-            vel_kmh = edicoes_usuario['velocidades'][(u, v, key)]
-        else:
-            vel_kmh = data.get('maxspeed')
-            if not vel_kmh or isinstance(vel_kmh, list):
-                vel_kmh = VELOCIDADE_PADRAO_KMH.get(tipo_via, 30)
-            else:
-                vel_kmh = float(vel_kmh)
-
+        vel_kmh = edicoes_usuario['velocidades'].get((u, v, key), 30) 
         vel_ms = max(0.1, vel_kmh / 3.6)
-        tempo_segundos = distancia_m / vel_ms
-
-        tempo_base = distancia_m / vel_ms
-
-        tempo_segundos = tempo_base * multiplicador_via(vel_kmh)
-
-        if v in semaforos_30_ativos:
-            tempo_segundos += SEMAFORO_30_PENALIDADE
-        elif v in semaforos_60_ativos:
-            tempo_segundos += SEMAFORO_60_PENALIDADE
-
-        if v in lombadas_40_ativas:
-            tempo_segundos += LOMBADA_40_PENALIDADE
-        elif v in lombadas_60_ativas:
-            tempo_segundos += LOMBADA_60_PENALIDADE
-        elif v in lombadas_80_ativas:
-            tempo_segundos += LOMBADA_80_PENALIDADE
-
-        G[u][v][key]['tempo_segundos'] = tempo_segundos
+        tempo_base = distancia_m / vel_ms        
+        penalidade_total = 0
+        
+        # Semaforos
+        if v in sem60:
+            penalidade_total += TABELA_PENALIDADES['semaforo60'] 
+        elif v in sem30:
+            penalidade_total += TABELA_PENALIDADES['semaforo30']
+            
+        # Lombadas
+        if v in lom80:
+            penalidade_total += TABELA_PENALIDADES['lombada80']
+        elif v in lom60:
+            penalidade_total += TABELA_PENALIDADES['lombada60']
+        elif v in lom40:
+            penalidade_total += TABELA_PENALIDADES['lombada40']
+            
+        G[u][v][key]['tempo_segundos'] = tempo_base + penalidade_total
 
 def fechar_janela_seguro(fig):
     plt.close(fig)
@@ -173,19 +181,32 @@ def fechar_janela_seguro(fig):
     gc.collect()
 
 def tem_edicoes_ativas():
-    return bool(edicoes_usuario['semaforos'] or edicoes_usuario['lombadas'] or
-                edicoes_usuario['velocidades'] or edicoes_usuario['removidos'])
+    return bool(
+        edicoes_usuario['semaforos30'] or 
+        edicoes_usuario['semaforos60'] or        
+        edicoes_usuario['lombadas40'] or 
+        edicoes_usuario['lombadas60'] or 
+        edicoes_usuario['lombadas80'] or
+        edicoes_usuario['velocidades'] or 
+        edicoes_usuario['removidos']
+    )
 
 def calcular_rota_sem_edicoes(origem, destino):
     backup = {
-        'semaforos': edicoes_usuario['semaforos'].copy(),
-        'lombadas': edicoes_usuario['lombadas'].copy(),
+        'semaforos60': edicoes_usuario['semaforos60'].copy(),
+        'semaforos30': edicoes_usuario['semaforos30'].copy(),
+        'lombadas40': edicoes_usuario['lombadas40'].copy(),
+        'lombadas60': edicoes_usuario['lombadas60'].copy(),
+        'lombadas80': edicoes_usuario['lombadas80'].copy(),
         'velocidades': edicoes_usuario['velocidades'].copy(),
         'removidos': edicoes_usuario['removidos'].copy(),
     }
-    
-    edicoes_usuario['semaforos'] = set()
-    edicoes_usuario['lombadas'] = set()
+        
+    edicoes_usuario['semaforos60'] = set()
+    edicoes_usuario['semaforos30'] = set()
+    edicoes_usuario['lombadas40'] = set()
+    edicoes_usuario['lombadas60'] = set()
+    edicoes_usuario['lombadas80'] = set()
     edicoes_usuario['velocidades'] = {}
     edicoes_usuario['removidos'] = set()
     atualizar_pesos_do_grafo()
@@ -196,10 +217,8 @@ def calcular_rota_sem_edicoes(origem, destino):
     
     stats_orig = calcular_estatisticas_dict(caminho_orig)
     
-    edicoes_usuario['semaforos'] = backup['semaforos']
-    edicoes_usuario['lombadas'] = backup['lombadas']
-    edicoes_usuario['velocidades'] = backup['velocidades']
-    edicoes_usuario['removidos'] = backup['removidos']
+    for chave, valor in backup.items():
+            edicoes_usuario[chave] = valor        
     atualizar_pesos_do_grafo()
     
     return caminho_orig, visitados_orig, tempo_orig, stats_orig
@@ -324,6 +343,8 @@ def calcular_estatisticas_dict(caminho):
     }
 
 def formatar_estatisticas(stats, visitados, tempo_execucao, titulo="ESTATÍSTICAS DA ROTA"):
+    total_sem = stats['semaforos30'] + stats['semaforos60']
+    total_lom = stats['lombadas40'] + stats['lombadas60'] + stats['lombadas80']
     return (
         f"{titulo}\n\n"
         f"⏱️ A* Tempo de Busca:\n   {tempo_execucao:.4f} seg\n\n"
@@ -331,8 +352,8 @@ def formatar_estatisticas(stats, visitados, tempo_execucao, titulo="ESTATÍSTICA
         f"🛣️ Distância Total:\n   {stats['distancia_km']:.2f} km\n\n"
         f"⏳ Tempo Estimado:\n   {stats['tempo_min']:.1f} minutos\n\n"
         f"🏎️ Velocidade Média:\n   {stats['vel_media']:.1f} km/h\n\n"
-        f"🚦 Semáforos:\n   {stats['semaforos']}\n\n"
-        f"🏔️ Lombadas:\n   {stats['lombadas']}"
+        f"🚦 Semáforos: {total_sem} (30s: {stats['semaforos30']}, 60s: {stats['semaforos60']})\n"
+        f"🏔️ Lombadas: {total_lom}"
     )
 
 def formatar_comparacao(stats_mod, stats_orig):
@@ -558,18 +579,20 @@ def modo_edicao():
     }
 
     nomes_modo = {
-        'semaforo':   '🚦 SEMÁFORO — Clique para adicionar',
-        'lombada':    '🏔️ LOMBADA — Clique para adicionar',
-        'velocidade': '🏎️ VELOCIDADE — Clique na via para alterar',
-        'limpar':     '🧹 LIMPAR — Clique para remover edição',
+        'semaforo30': '🚦 SEMÁFORO 30s',
+        'semaforo60': '🚦 SEMÁFORO 60s',
+        'lombada40':  '🏔️ PARDAL 40km/h',
+        'lombada60':  '🏔️ PARDAL 60km/h',
+        'lombada80':  '🏔️ PARDAL 80km/h',
+        'limpar':     '🧹 LIMPAR EDIÇÃO'
     }
-
+    
     def atualizar_titulo():
         if estado['modo']:
             titulo = f"EDITOR | Ferramenta: {nomes_modo[estado['modo']]}"
             cor = 'cyan'
         else:
-            titulo = "EDITOR | Pressione 1, 2, 3 ou 4 para escolher ferramenta"
+            titulo = "EDITOR | Pressione 1, 2, 3, 4, 5, 6 ou 7 para escolher ferramenta"
             cor = 'white'
         ax.set_title(titulo, color=cor, fontsize=13, fontweight='bold')
         fig.canvas.draw_idle()
@@ -582,14 +605,17 @@ def modo_edicao():
         estado['scat_lom'] = None
         estado['scat_vel'] = None
 
-        if edicoes_usuario['semaforos']:
-            sx = [G.nodes[n]['x'] for n in edicoes_usuario['semaforos']]
-            sy = [G.nodes[n]['y'] for n in edicoes_usuario['semaforos']]
+
+        todos_semaforos = edicoes_usuario['semaforos30'] | edicoes_usuario['semaforos60'] # Unifica os marcadores de semáforo
+        if todos_semaforos:
+            sx = [G.nodes[n]['x'] for n in todos_semaforos]
+            sy = [G.nodes[n]['y'] for n in todos_semaforos]
             estado['scat_sem'] = ax.scatter(sx, sy, c='red', s=100, marker='s', label='🚦 Semáforos', zorder=5, edgecolors='white', linewidths=0.5)
 
-        if edicoes_usuario['lombadas']:
-            lx = [G.nodes[n]['x'] for n in edicoes_usuario['lombadas']]
-            ly = [G.nodes[n]['y'] for n in edicoes_usuario['lombadas']]
+        todas_lombadas = edicoes_usuario['lombadas40'] | edicoes_usuario['lombadas60'] | edicoes_usuario['lombadas80'] # Unifica os marcadores de lombada
+        if todas_lombadas:
+            lx = [G.nodes[n]['x'] for n in todas_lombadas]
+            ly = [G.nodes[n]['y'] for n in todas_lombadas]
             estado['scat_lom'] = ax.scatter(lx, ly, c='orange', s=100, marker='^', label='🏔️ Lombadas', zorder=5, edgecolors='white', linewidths=0.5)
 
         nos_vel = set()
@@ -652,21 +678,20 @@ def modo_edicao():
 
         tem_semaforo = False
         origem_semaforo = ''
-        if no_prox in edicoes_usuario['semaforos']:
-            tem_semaforo = True
-            origem_semaforo = 'adicionado por você'
+        if no_prox in edicoes_usuario['semaforos30']:
+            tem_semaforo, origem_semaforo = True, '30s (adicionado)'
+        elif no_prox in edicoes_usuario['semaforos60']:
+            tem_semaforo, origem_semaforo = True, '60s (adicionado)'
         elif G.nodes[no_prox].get('highway') == 'traffic_signals' and no_prox not in edicoes_usuario['removidos']:
-            tem_semaforo = True
-            origem_semaforo = 'original do mapa'
+            tem_semaforo, origem_semaforo = True, 'original do mapa'
 
+        # Verificação de Lombadas/Pardais (Nova Lógica)
         tem_lombada = False
         origem_lombada = ''
-        if no_prox in edicoes_usuario['lombadas']:
-            tem_lombada = True
-            origem_lombada = 'adicionada por você'
-        elif G.nodes[no_prox].get('traffic_calming') in ['bump', 'hump'] and no_prox not in edicoes_usuario['removidos']:
-            tem_lombada = True
-            origem_lombada = 'original do mapa'
+        for cat in ['lombadas40', 'lombadas60', 'lombadas80']:
+            if no_prox in edicoes_usuario[cat]:
+                tem_lombada, origem_lombada = True, f'{cat[-2:]}km/h (adicionada)'
+                break
 
         tempo_seg = dados.get('tempo_segundos', 0)
 
@@ -678,28 +703,40 @@ def modo_edicao():
         }
 
     def imprimir_situacao(info):
-        vel_ms = info['vel_kmh'] / 3.6
         print(f"\n{'─' * 55}")
         print(f"📍 {info['nome_rua']}")
         print(f"   Tipo de via: {info['tipo_via']}")
         print(f"   Distância do trecho: {info['distancia_m']:.0f} m")
         print(f"   Velocidade máx: {info['vel_kmh']:.0f} km/h ({info['origem_vel']})")
+        
         if info['tem_semaforo']:
-            pen = penalidade_semaforo(vel_ms)
-            print(f"   Semáforo: ✅ Sim ({info['origem_semaforo']}) → penalidade: +{pen:.1f}s")
-        else: print(f"   Semáforo: ❌ Não")
+            print(f"   Semáforo: ✅ Sim ({info['origem_semaforo']})")
+        else: 
+            print(f"   Semáforo: ❌ Não")
+            
         if info['tem_lombada']:
-            pen = penalidade_lombada(vel_ms)
-            print(f"   Lombada:  ✅ Sim ({info['origem_lombada']}) → penalidade: +{pen:.1f}s")
-        else: print(f"   Lombada:  ❌ Não")
-        print(f"   Peso total (tempo): {info['tempo_seg']:.1f} seg")
+            print(f"   Lombada/Pardal: ✅ Sim ({info['origem_lombada']})")
+        else: 
+            print(f"   Lombada/Pardal: ❌ Não")
+            
+        print(f"   Peso total calculado: {info['tempo_seg']:.1f} seg")
         print(f"{'─' * 55}")
 
     def on_key(event):
-        if event.key == '1': estado['modo'] = 'semaforo'
-        elif event.key == '2': estado['modo'] = 'lombada'
-        elif event.key == '3': estado['modo'] = 'velocidade'
-        elif event.key == '4': estado['modo'] = 'limpar'
+        if event.key == '1': 
+            estado['modo'] = 'semaforo30'
+        elif event.key == '2': 
+            estado['modo'] = 'semaforo60'
+        elif event.key == '3': 
+            estado['modo'] = 'lombada40'
+        elif event.key == '4': 
+            estado['modo'] = 'lombada60'
+        elif event.key == '5': 
+            estado['modo'] = 'lombada80'
+        elif event.key == '6': 
+            estado['modo'] = 'velocidade'
+        elif event.key == '7': 
+            estado['modo'] = 'limpar'
         elif event.key in ('q', 'Q', 'escape'):
             estado['aberto'] = False
             plt.close(fig)
@@ -709,7 +746,7 @@ def modo_edicao():
     def on_click(event):
         if event.inaxes != ax or event.button != 1: return
         if not estado['modo']:
-            mostrar_feedback('⚠️ Selecione uma ferramenta primeiro (teclas 1-4)', cor='yellow')
+            mostrar_feedback('⚠️ Selecione uma ferramenta primeiro (teclas 1-7)', cor='yellow')
             return
 
         lon, lat = event.xdata, event.ydata
@@ -723,19 +760,33 @@ def modo_edicao():
         imprimir_situacao(info)
         nome_rua = info['nome_rua']
 
-        if estado['modo'] == 'semaforo':
-            if info['tem_semaforo']:
-                mostrar_feedback(f'⚠️ Já tem semáforo aqui ({info["origem_semaforo"]}) — {nome_rua}', cor='yellow')
-                return
-            edicoes_usuario['semaforos'].add(no_prox)
-            mostrar_feedback(f'🚦 Semáforo adicionado em: {nome_rua}')
+        if estado['modo'] == 'semaforo30':
+            edicoes_usuario['semaforos30'].add(no_prox)
+            edicoes_usuario['semaforos60'].discard(no_prox) 
+            mostrar_feedback(f'🚦 Semáforo 30s adicionado no nó {no_prox}')
 
-        elif estado['modo'] == 'lombada':
-            if info['tem_lombada']:
-                mostrar_feedback(f'⚠️ Já tem lombada aqui ({info["origem_lombada"]}) — {nome_rua}', cor='yellow')
-                return
-            edicoes_usuario['lombadas'].add(no_prox)
-            mostrar_feedback(f'🏔️ Lombada adicionada em: {nome_rua}')
+        elif estado['modo'] == 'semaforo60':
+            edicoes_usuario['semaforos60'].add(no_prox)
+            edicoes_usuario['semaforos30'].discard(no_prox)
+            mostrar_feedback(f'🚦 Semáforo 60s adicionado no nó {no_prox}')
+
+        elif estado['modo'] == 'lombada40':
+            edicoes_usuario['lombadas40'].add(no_prox)
+            edicoes_usuario['lombadas60'].discard(no_prox)
+            edicoes_usuario['lombadas80'].discard(no_prox)
+            mostrar_feedback(f'🏔️ Pardal 40km/h adicionado')
+        
+        elif estado['modo'] == 'lombada60':
+            edicoes_usuario['lombadas60'].add(no_prox)
+            edicoes_usuario['lombadas60'].discard(no_prox)
+            edicoes_usuario['lombadas80'].discard(no_prox)
+            mostrar_feedback(f'🏔️ Pardal 60km/h adicionado')
+        
+        elif estado['modo'] == 'lombada80':
+            edicoes_usuario['lombadas80'].add(no_prox)
+            edicoes_usuario['lombadas60'].discard(no_prox)
+            edicoes_usuario['lombadas80'].discard(no_prox)
+            mostrar_feedback(f'🏔️ Pardal 80km/h adicionado')
 
         elif estado['modo'] == 'velocidade':
             mostrar_feedback(f'🏎️ Vel. atual: {info["vel_kmh"]:.0f} km/h — Aguardando entrada...', cor='cyan')
@@ -753,18 +804,18 @@ def modo_edicao():
         elif estado['modo'] == 'limpar':
             removido = False
             detalhes = []
-            if no_prox in edicoes_usuario['semaforos']:
-                edicoes_usuario['semaforos'].discard(no_prox)
-                removido = True
-                detalhes.append('semáforo')
-            if no_prox in edicoes_usuario['lombadas']:
-                edicoes_usuario['lombadas'].discard(no_prox)
-                removido = True
-                detalhes.append('lombada')
+
+            for cat in ['semaforos30', 'semaforos60', 'lombadas40', 'lombadas60', 'lombadas80']:
+                if no_prox in edicoes_usuario[cat]:
+                    edicoes_usuario[cat].discard(no_prox)
+                    removido = True
+                    detalhes.append(cat)
+
             if (u, v, key) in edicoes_usuario['velocidades']:
                 del edicoes_usuario['velocidades'][(u, v, key)]
                 removido = True
                 detalhes.append('velocidade')
+
             edicoes_usuario['removidos'].add(no_prox)
 
             if removido:
@@ -789,6 +840,9 @@ def modo_edicao():
     salvar_edicoes()
     print("\n✅ Editor fechado. Suas edições foram salvas.")
 
+
+atualizar_pesos_do_grafo()
+
 # ==========================================
 # 5️⃣ LOOP PRINCIPAL
 # ==========================================
@@ -801,8 +855,13 @@ while True:
     print("[3] Limpar TODAS as edições (Reverter mapa original)")
     print("[4] Sair")
     if tem_edicoes_ativas():
-        qtd = (len(edicoes_usuario['semaforos']) + len(edicoes_usuario['lombadas']) +
-               len(edicoes_usuario['velocidades']) + len(edicoes_usuario['removidos']))
+        qtd = (len(edicoes_usuario['semaforos30']) +
+               len(edicoes_usuario['semaforos60']) +
+               len(edicoes_usuario['lombadas40']) + 
+               len(edicoes_usuario['lombadas60']) + 
+               len(edicoes_usuario['lombadas80']) + 
+               len(edicoes_usuario['velocidades']) + 
+               len(edicoes_usuario['removidos']))
         print(f"    📝 {qtd} edição(ões) ativas no mapa")
     
     opcao = input("Escolha uma opção: ")
@@ -810,7 +869,7 @@ while True:
     if opcao == '1': modo_selecionar_rota()
     elif opcao == '2': modo_edicao()
     elif opcao == '3':
-        edicoes_usuario = {'semaforos60': set(), 'semaforos30': set(), 'lombadas40': set(), 'lombadas60': set(), 'lombadas80': set(), 'velocidades': {}, 'removidos': set()}
+        edicoes_usuario = carregar_edicoes()
         atualizar_pesos_do_grafo()
         salvar_edicoes()
         print("🔄 Mapa resetado para os padrões de fábrica!")

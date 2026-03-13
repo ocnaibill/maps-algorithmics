@@ -1,11 +1,15 @@
 {
-  "semaforos": [
-    1464616401,
-    1464616387,
-    1464616405,
-    1464616382
+  "semaforos60": [
+    1464616403
   ],
-  "lombadas": [],
+  "semaforos30": [
+    2861217429
+  ],
+  "lombadas40": [
+    1464616373
+  ],
+  "lombadas60": [],
+  "lombadas80": [],
   "velocidades": {},
   "removidos": []
 }
