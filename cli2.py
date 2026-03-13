@@ -38,24 +38,73 @@ VELOCIDADE_PADRAO_KMH = {'trunk': 80, 'primary': 60, 'secondary': 60, 'tertiary'
 # 1. MODELO FÍSICO DE PENALIDADES
 # ==========================================
 
-tabela_penalidade = {
-    'semaforo60': 60,
-    'semaforo30': 30,
-    'lombada40': 15,
-    'lombada60': 10,
-    'lombada80': 5,
-}
+SEMAFORO_30_PENALIDADE = 30.0
+SEMAFORO_60_PENALIDADE = 60.0
+LOMBADA_40_PENALIDADE = 15.0
+LOMBADA_60_PENALIDADE = 10.0
+LOMBADA_80_PENALIDADE = 5.0
+
+def multiplicador_via(vel_kmh):
+    if vel_kmh <= 40:
+        return 1.5
+    elif vel_kmh <= 60:
+        return 1.2
+    else:
+        return 1.0
+    
+def atualizar_pesos_do_grafo():
+    semaforos_30_ativos = edicoes_usuario['semaforos_30'].copy()
+    semaforos_60_ativos = edicoes_usuario['semaforos_60'].copy()
+    lombadas_40_ativas = edicoes_usuario['lombadas_40'].copy()
+    lombadas_60_ativas = edicoes_usuario['lombadas_60'].copy()
+    lombadas_80_ativas = edicoes_usuario['lombadas_80'].copy()
+
+    for node, data in G.nodes(data=True):
+        if node in edicoes_usuario['removidos']: continue
+        if data.get('highway') == 'traffic_signals': semaforos_30_ativos.add(node)
+        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_40_ativas.add(node)
+
+    for u, v, key, data in G.edges(keys=True, data=True):
+        distancia_m = data.get('length', 0)
+        tipo_via = data.get('highway', 'residential')
+
+        if isinstance(tipo_via, list): tipo_via = tipo_via[0]
+
+        if (u, v, key) in edicoes_usuario['velocidades']:
+            vel_kmh = edicoes_usuario['velocidades'][(u, v, key)]
+        else:
+            vel_kmh = data.get('maxspeed')
+            if not vel_kmh or isinstance(vel_kmh, list):
+                vel_kmh = VELOCIDADE_PADRAO_KMH.get(tipo_via, 30)
+            else:
+                vel_kmh = float(vel_kmh)
+
+        vel_ms = max(0.1, vel_kmh / 3.6)
+        tempo_segundos = distancia_m / vel_ms
+
+        tempo_base = distancia_m / vel_ms
+
+        tempo_segundos = tempo_base * multiplicador_via(vel_kmh)
+
+        if v in semaforos_30_ativos:
+            tempo_segundos += SEMAFORO_30_PENALIDADE
+        elif v in semaforos_60_ativos:
+            tempo_segundos += SEMAFORO_60_PENALIDADE
+
+        if v in lombadas_40_ativas:
+            tempo_segundos += LOMBADA_40_PENALIDADE
+        elif v in lombadas_60_ativas:
+            tempo_segundos += LOMBADA_60_PENALIDADE
+        elif v in lombadas_80_ativas:
+            tempo_segundos += LOMBADA_80_PENALIDADE
+
+        G[u][v][key]['tempo_segundos'] = tempo_segundos
 
 FRENAGEM_MS2 = 3.0        
 ACELERACAO_MS2 = 2.0      
 ESPERA_SEMAFORO_S = 30.0   
 VEL_LOMBADA_KMH = 20.0    
 ZONA_LOMBADA_M = 30.0     
-
-def penalidade_semaforo(vel_ms):
-    tempo_frenagem = vel_ms / FRENAGEM_MS2
-    tempo_aceleracao = vel_ms / ACELERACAO_MS2
-    return ESPERA_SEMAFORO_S + tempo_frenagem + tempo_aceleracao
 
 # ==========================================
 # 1. PERSISTÊNCIA DE EDIÇÕES (JSON)
@@ -122,8 +171,8 @@ def atualizar_pesos_do_grafo():
     
     for node, data in G.nodes(data=True):
         if node in edicoes_usuario['removidos']: continue
-        if data.get('highway') == 'traffic_signals': semaforos_ativos.add(node)
-        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_ativas.add(node)
+        if data.get('highway') == 'traffic_signals': semaforos30_ativos.add(node)
+        if data.get('traffic_calming') in ['bump', 'hump']: lombadas40_ativas.add(node)
 
     for u, v, key, data in G.edges(keys=True, data=True):
         distancia_m = data.get('length', 0)
@@ -277,14 +326,20 @@ def dijkstra_animado(inicio, fim):
 def calcular_estatisticas_dict(caminho):
     distancia_total = 0
     tempo_total = 0
-    semaforos_passados = 0
-    lombadas_passadas = 0
+    semaforos60_passados = 0
+    semaforos30_passados = 0
+    lombadas40_passadas = 0
+    lombadas60_passadas = 0
+    lombadas80_passadas = 0
 
-    semaforos_ativos = edicoes_usuario['semaforos'].copy()
-    lombadas_ativas = edicoes_usuario['lombadas'].copy()
+    semaforos60_ativos = edicoes_usuario['semaforos60'].copy()
+    semaforos30_ativos = edicoes_usuario['semaforos30'].copy()
+    lombadas40_ativas = edicoes_usuario['lombadas40'].copy()
+    lombadas60_ativas = edicoes_usuario['lombadas60'].copy()
+    lombadas80_ativas = edicoes_usuario['lombadas80'].copy()
     for n, d in G.nodes(data=True):
-        if d.get('highway') == 'traffic_signals': semaforos_ativos.add(n)
-        if d.get('traffic_calming') in ['bump', 'hump']: lombadas_ativas.add(n)
+        if d.get('highway') == 'traffic_signals': semaforos30_ativos.add(n)
+        if d.get('traffic_calming') in ['bump', 'hump']: lombadas40_ativas.add(n)
 
     for i in range(len(caminho)-1):
         u = caminho[i]
@@ -292,16 +347,21 @@ def calcular_estatisticas_dict(caminho):
         dados_aresta = G[u][v][0]
         distancia_total += dados_aresta['length']
         tempo_total += dados_aresta['tempo_segundos']
-        if v in semaforos_ativos: semaforos_passados += 1
-        if v in lombadas_ativas: lombadas_passadas += 1
-
+        if v in semaforos60_ativos: semaforos60_passados += 1
+        if v in semaforos30_ativos: semaforos30_passados += 1
+        if v in lombadas40_ativas: lombadas40_passadas += 1
+        if v in lombadas60_ativas: lombadas60_passadas += 1
+        if v in lombadas80_ativas: lombadas80_passadas += 1
     vel_media = (distancia_total / tempo_total) * 3.6 if tempo_total > 0 else 0
     return {
         'distancia_km': distancia_total / 1000,
         'tempo_min': tempo_total / 60,
         'vel_media': vel_media,
-        'semaforos': semaforos_passados,
-        'lombadas': lombadas_passadas,
+        'semaforos60': semaforos60_passados,
+        'semaforos30': semaforos30_passados,
+        'lombadas40': lombadas40_passadas,
+        'lombadas60': lombadas60_passadas,
+        'lombadas80': lombadas80_passadas,
     }
 
 def formatar_estatisticas(stats, visitados, tempo_execucao, titulo="ESTATÍSTICAS DA ROTA"):
