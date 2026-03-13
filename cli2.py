@@ -24,7 +24,7 @@ except ImportError:
 # INICIALIZAÇÃO E DOWNLOAD DO MAPA
 # ==========================================
 print("Carregando o sistema e baixando o mapa do Cruzeiro (DF)...")
-if 'traffic_calming' not in ox.settings.useful_tags_node:
+if 'traffic_calming' not in ox.settings.useful_tags_node: # verificar em que impacta no código
     ox.settings.useful_tags_node.append('traffic_calming')
 if 'surface' not in ox.settings.useful_tags_way:
     ox.settings.useful_tags_way.append('surface')
@@ -52,53 +52,7 @@ def multiplicador_via(vel_kmh):
     else:
         return 1.0
     
-def atualizar_pesos_do_grafo():
-    semaforos_30_ativos = edicoes_usuario['semaforos_30'].copy()
-    semaforos_60_ativos = edicoes_usuario['semaforos_60'].copy()
-    lombadas_40_ativas = edicoes_usuario['lombadas_40'].copy()
-    lombadas_60_ativas = edicoes_usuario['lombadas_60'].copy()
-    lombadas_80_ativas = edicoes_usuario['lombadas_80'].copy()
 
-    for node, data in G.nodes(data=True):
-        if node in edicoes_usuario['removidos']: continue
-        if data.get('highway') == 'traffic_signals': semaforos_30_ativos.add(node)
-        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_40_ativas.add(node)
-
-    for u, v, key, data in G.edges(keys=True, data=True):
-        distancia_m = data.get('length', 0)
-        tipo_via = data.get('highway', 'residential')
-
-        if isinstance(tipo_via, list): tipo_via = tipo_via[0]
-
-        if (u, v, key) in edicoes_usuario['velocidades']:
-            vel_kmh = edicoes_usuario['velocidades'][(u, v, key)]
-        else:
-            vel_kmh = data.get('maxspeed')
-            if not vel_kmh or isinstance(vel_kmh, list):
-                vel_kmh = VELOCIDADE_PADRAO_KMH.get(tipo_via, 30)
-            else:
-                vel_kmh = float(vel_kmh)
-
-        vel_ms = max(0.1, vel_kmh / 3.6)
-        tempo_segundos = distancia_m / vel_ms
-
-        tempo_base = distancia_m / vel_ms
-
-        tempo_segundos = tempo_base * multiplicador_via(vel_kmh)
-
-        if v in semaforos_30_ativos:
-            tempo_segundos += SEMAFORO_30_PENALIDADE
-        elif v in semaforos_60_ativos:
-            tempo_segundos += SEMAFORO_60_PENALIDADE
-
-        if v in lombadas_40_ativas:
-            tempo_segundos += LOMBADA_40_PENALIDADE
-        elif v in lombadas_60_ativas:
-            tempo_segundos += LOMBADA_60_PENALIDADE
-        elif v in lombadas_80_ativas:
-            tempo_segundos += LOMBADA_80_PENALIDADE
-
-        G[u][v][key]['tempo_segundos'] = tempo_segundos
 
 FRENAGEM_MS2 = 3.0        
 ACELERACAO_MS2 = 2.0      
@@ -162,23 +116,25 @@ if tem_edicoes_salvas:
 # ==========================================
 #  MOTOR DE CÁLCULO DE PESOS
 # ==========================================
+
 def atualizar_pesos_do_grafo():
-    semaforos60_ativos = edicoes_usuario['semaforos60'].copy()
-    semaforos30_ativos = edicoes_usuario['semaforos30'].copy()
-    lombadas40_ativas = edicoes_usuario['lombadas40'].copy()
-    lombadas60_ativas = edicoes_usuario['lombadas60'].copy()
-    lombadas80_ativas = edicoes_usuario['lombadas80'].copy()
-    
+    semaforos_30_ativos = edicoes_usuario['semaforos_30'].copy()
+    semaforos_60_ativos = edicoes_usuario['semaforos_60'].copy()
+    lombadas_40_ativas = edicoes_usuario['lombadas_40'].copy()
+    lombadas_60_ativas = edicoes_usuario['lombadas_60'].copy()
+    lombadas_80_ativas = edicoes_usuario['lombadas_80'].copy()
+
     for node, data in G.nodes(data=True):
         if node in edicoes_usuario['removidos']: continue
-        if data.get('highway') == 'traffic_signals': semaforos30_ativos.add(node)
-        if data.get('traffic_calming') in ['bump', 'hump']: lombadas40_ativas.add(node)
+        if data.get('highway') == 'traffic_signals': semaforos_30_ativos.add(node)
+        if data.get('traffic_calming') in ['bump', 'hump']: lombadas_40_ativas.add(node)
 
     for u, v, key, data in G.edges(keys=True, data=True):
         distancia_m = data.get('length', 0)
         tipo_via = data.get('highway', 'residential')
+
         if isinstance(tipo_via, list): tipo_via = tipo_via[0]
-        
+
         if (u, v, key) in edicoes_usuario['velocidades']:
             vel_kmh = edicoes_usuario['velocidades'][(u, v, key)]
         else:
@@ -187,24 +143,27 @@ def atualizar_pesos_do_grafo():
                 vel_kmh = VELOCIDADE_PADRAO_KMH.get(tipo_via, 30)
             else:
                 vel_kmh = float(vel_kmh)
-            
+
         vel_ms = max(0.1, vel_kmh / 3.6)
         tempo_segundos = distancia_m / vel_ms
-        
-        if v in semaforos60_ativos:
-            tempo_segundos += tabela_penalidade['semaforo60']
-        if v in semaforos30_ativos:
-            tempo_segundos += tabela_penalidade['semaforo30']
-        if v in lombadas40_ativas:
-            tempo_segundos += tabela_penalidade['lombada40']
-        if v in lombadas60_ativas:
-            tempo_segundos += tabela_penalidade['lombada60']
-        if v in lombadas80_ativas:
-            tempo_segundos += tabela_penalidade['lombada80']
-            
-        G[u][v][key]['tempo_segundos'] = tempo_segundos
 
-atualizar_pesos_do_grafo()
+        tempo_base = distancia_m / vel_ms
+
+        tempo_segundos = tempo_base * multiplicador_via(vel_kmh)
+
+        if v in semaforos_30_ativos:
+            tempo_segundos += SEMAFORO_30_PENALIDADE
+        elif v in semaforos_60_ativos:
+            tempo_segundos += SEMAFORO_60_PENALIDADE
+
+        if v in lombadas_40_ativas:
+            tempo_segundos += LOMBADA_40_PENALIDADE
+        elif v in lombadas_60_ativas:
+            tempo_segundos += LOMBADA_60_PENALIDADE
+        elif v in lombadas_80_ativas:
+            tempo_segundos += LOMBADA_80_PENALIDADE
+
+        G[u][v][key]['tempo_segundos'] = tempo_segundos
 
 def fechar_janela_seguro(fig):
     plt.close(fig)
